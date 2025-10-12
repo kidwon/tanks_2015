@@ -1,0 +1,44 @@
+# Unity generated folders
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+[Rr]ecordings/
+
+# Asset meta data should only be ignored when the corresponding asset is also ignored
+# *.meta
+
+# User-specific files
+UserSettings/
+*.userprefs
+
+# IDE files
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.unityproj
+*.pidb
+*.booproj
+*.svd
+*.suo
+*.user
+
+# Collab and Plastic SCM
+.plastic/
+
+# Crash reports
+*.stacktrace
+*.dmp
+
+# Generated build artifacts
+*.apk
+*.aab
+*.unitypackage
+
+# OS files
+.DS_Store
+Thumbs.db
