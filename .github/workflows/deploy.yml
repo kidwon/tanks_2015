@@ -1,0 +1,20 @@
+name: Deploy WebGL to GH Pages
+on:
+  push:
+    branches: [ main ]
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # 假设你的 Unity 产物在 BuildWebGL/（里面有 index.html 和 Build/）
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: BuildWebGL
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
