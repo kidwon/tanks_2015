@@ -46,6 +46,10 @@ public class GameManager : MonoBehaviour
                 Instantiate(m_TankPrefab, m_Tanks[i].m_SpawnPoint.position, m_Tanks[i].m_SpawnPoint.rotation);
             m_Tanks[i].m_PlayerNumber = i + 1;
             m_Tanks[i].Setup();
+
+            var movement = m_Tanks[i].m_Instance.GetComponent<TankMovement>();
+            var shooting = m_Tanks[i].m_Instance.GetComponent<TankShooting>();
+            MobileInputController.RegisterTank(movement, shooting);
         }
     }
 

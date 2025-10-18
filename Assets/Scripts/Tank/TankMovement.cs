@@ -17,6 +17,9 @@ public class TankMovement : MonoBehaviour
     private float m_MovementInputValue;    
     private float m_TurnInputValue;        
     private float m_OriginalPitch;         
+    private bool m_UseExternalInput;
+    private float m_ExternalMovement;
+    private float m_ExternalTurn;
 
 
     private void Awake()
@@ -51,9 +54,31 @@ public class TankMovement : MonoBehaviour
     private void Update()
     {
         // Store the player's input and make sure the audio for the engine is playing.
-        m_MovementInputValue = Input.GetAxis(m_MovementAxisName);
-        m_TurnInputValue = Input.GetAxis(m_TurnAxisName);
+        if (m_UseExternalInput)
+        {
+            m_MovementInputValue = Mathf.Clamp(m_ExternalMovement, -1f, 1f);
+            m_TurnInputValue = Mathf.Clamp(m_ExternalTurn, -1f, 1f);
+        }
+        else
+        {
+            m_MovementInputValue = Input.GetAxis(m_MovementAxisName);
+            m_TurnInputValue = Input.GetAxis(m_TurnAxisName);
+        }
         EngineAudio();
+    }
+
+    public void SetExternalInput(float movement, float turn)
+    {
+        m_UseExternalInput = true;
+        m_ExternalMovement = Mathf.Clamp(movement, -1f, 1f);
+        m_ExternalTurn = Mathf.Clamp(turn, -1f, 1f);
+    }
+
+    public void DisableExternalInput()
+    {
+        m_UseExternalInput = false;
+        m_ExternalMovement = 0f;
+        m_ExternalTurn = 0f;
     }
 
 

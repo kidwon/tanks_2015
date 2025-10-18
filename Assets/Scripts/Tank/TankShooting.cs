@@ -18,6 +18,10 @@ public class TankShooting : MonoBehaviour
     private float m_CurrentLaunchForce;  
     private float m_ChargeSpeed;         
     private bool m_Fired;                
+    private bool m_UseExternalFireInput;
+    private bool m_ExternalFirePressed;
+    private bool m_ExternalFireHeld;
+    private bool m_ExternalFireReleased;
 
 
     private void OnEnable()
@@ -38,13 +42,32 @@ public class TankShooting : MonoBehaviour
     {
         // Track the current state of the fire button and make decisions based on the current launch force.
         m_AimSlider.value = m_MinLaunchForce;
+        bool firePressed;
+        bool fireHeld;
+        bool fireReleased;
+
+        if (m_UseExternalFireInput)
+        {
+            firePressed = m_ExternalFirePressed;
+            fireHeld = m_ExternalFireHeld;
+            fireReleased = m_ExternalFireReleased;
+            m_ExternalFirePressed = false;
+            m_ExternalFireReleased = false;
+        }
+        else
+        {
+            firePressed = Input.GetButtonDown(m_FireButton);
+            fireHeld = Input.GetButton(m_FireButton);
+            fireReleased = Input.GetButtonUp(m_FireButton);
+        }
+
         if (m_CurrentLaunchForce >= m_MaxLaunchForce && !m_Fired)
         {
             // at max charge, not yet fired
             m_CurrentLaunchForce = m_MaxLaunchForce;
             Fire();
         }
-        else if (Input.GetButtonDown(m_FireButton))
+        else if (firePressed)
         {
             // have just pressed fire
             m_Fired = false;
@@ -53,13 +76,13 @@ public class TankShooting : MonoBehaviour
             m_ShootingAudio.clip = m_ChargingClip;
             m_ShootingAudio.Play();
         }
-        else if (Input.GetButton(m_FireButton) && !m_Fired)
+        else if (fireHeld && !m_Fired)
         {
             // still holding fire
             m_CurrentLaunchForce += m_ChargeSpeed * Time.deltaTime;
             m_AimSlider.value = m_CurrentLaunchForce;
         }
-        else if (Input.GetButtonUp(m_FireButton) && !m_Fired)
+        else if (fireReleased && !m_Fired)
         {
             // have released fire
             Fire();
@@ -77,5 +100,21 @@ public class TankShooting : MonoBehaviour
         m_ShootingAudio.Play();
         m_CurrentLaunchForce = m_MinLaunchForce;
         m_AimSlider.value = m_MinLaunchForce;
+    }
+
+    public void SetExternalFireInput(bool pressed, bool held, bool released)
+    {
+        m_UseExternalFireInput = true;
+        m_ExternalFirePressed = pressed;
+        m_ExternalFireHeld = held;
+        m_ExternalFireReleased = released;
+    }
+
+    public void DisableExternalFireInput()
+    {
+        m_UseExternalFireInput = false;
+        m_ExternalFirePressed = false;
+        m_ExternalFireHeld = false;
+        m_ExternalFireReleased = false;
     }
 }
