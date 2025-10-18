@@ -43,7 +43,7 @@ public class GameManager : MonoBehaviour
         for (int i = 0; i < m_Tanks.Length; i++)
         {
             m_Tanks[i].m_Instance =
-                Instantiate(m_TankPrefab, m_Tanks[i].m_SpawnPoint.position, m_Tanks[i].m_SpawnPoint.rotation) as GameObject;
+                Instantiate(m_TankPrefab, m_Tanks[i].m_SpawnPoint.position, m_Tanks[i].m_SpawnPoint.rotation);
             m_Tanks[i].m_PlayerNumber = i + 1;
             m_Tanks[i].Setup();
         }
@@ -95,12 +95,26 @@ public class GameManager : MonoBehaviour
 
     private IEnumerator RoundPlaying()
     {
+        EnableTankControl();
+        m_MessageText.text = string.Empty;
+        while (!OneTankLeft())
+        {
+            yield return null;
+        }
+        m_RoundWinner = GetRoundWinner();
+        if (m_RoundWinner != null)
+        {
+            m_RoundWinner.m_Wins++;
+            m_GameWinner = GetGameWinner();
+        }
         yield return null;
     }
 
 
     private IEnumerator RoundEnding()
     {
+        DisableTankControl();
+        m_MessageText.text = EndMessage();
         yield return m_EndWait;
     }
 

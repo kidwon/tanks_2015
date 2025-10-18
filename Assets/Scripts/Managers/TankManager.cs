@@ -39,24 +39,49 @@ public class TankManager
 
     public void DisableControl()
     {
-        m_Movement.enabled = false;
-        m_Shooting.enabled = false;
+        if (m_Movement != null)
+        {
+            m_Movement.enabled = false;
+        }
 
-        m_CanvasGameObject.SetActive(false);
+        if (m_Shooting != null)
+        {
+            m_Shooting.enabled = false;
+        }
+
+        if (m_CanvasGameObject != null)
+        {
+            m_CanvasGameObject.SetActive(false);
+        }
     }
 
 
     public void EnableControl()
     {
-        m_Movement.enabled = true;
-        m_Shooting.enabled = true;
+        if (m_Movement != null)
+        {
+            m_Movement.enabled = true;
+        }
 
-        m_CanvasGameObject.SetActive(true);
+        if (m_Shooting != null)
+        {
+            m_Shooting.enabled = true;
+        }
+
+        if (m_CanvasGameObject != null)
+        {
+            m_CanvasGameObject.SetActive(true);
+        }
     }
 
 
     public void Reset()
     {
+        if (m_Instance == null)
+        {
+            return;
+        }
+
         m_Instance.transform.position = m_SpawnPoint.position;
         m_Instance.transform.rotation = m_SpawnPoint.rotation;
 
