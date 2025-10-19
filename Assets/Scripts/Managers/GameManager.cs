@@ -40,6 +40,7 @@ public class GameManager : MonoBehaviour
 
     private void SpawnAllTanks()
     {
+        Debug.Log("Spawning all tanks");
         for (int i = 0; i < m_Tanks.Length; i++)
         {
             m_Tanks[i].m_Instance =
@@ -47,8 +48,11 @@ public class GameManager : MonoBehaviour
             m_Tanks[i].m_PlayerNumber = i + 1;
             m_Tanks[i].Setup();
 
+            Debug.Log("Setting up mobile controls for tank " + m_Tanks[i].m_PlayerNumber);
+
             var movement = m_Tanks[i].m_Instance.GetComponent<TankMovement>();
             var shooting = m_Tanks[i].m_Instance.GetComponent<TankShooting>();
+            Debug.Log("Registering tank " + m_Tanks[i].m_PlayerNumber);
             MobileInputController.RegisterTank(movement, shooting);
         }
     }

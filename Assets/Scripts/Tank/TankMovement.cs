@@ -36,12 +36,14 @@ public class TankMovement : MonoBehaviour
         m_Rigidbody.isKinematic = false;
         m_MovementInputValue = 0f;
         m_TurnInputValue = 0f;
+        MobileInputController.RegisterTank(this, GetComponent<TankShooting>());
     }
 
 
     private void OnDisable ()
     {
         m_Rigidbody.isKinematic = true;
+        MobileInputController.UnregisterTank(this, GetComponent<TankShooting>());
     }
 
 
