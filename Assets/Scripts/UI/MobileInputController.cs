@@ -5,52 +5,26 @@ using UnityEngine.UI;
 
 public class MobileInputController : MonoBehaviour
 {
+    [SerializeField] private LayerMask m_GroundMask = ~0;
+    [SerializeField] private float m_StopDistance = 1.5f;
+
     private static MobileInputController s_Instance;
 
     private readonly List<TankMovement> m_TankMovements = new List<TankMovement>();
     private readonly List<TankShooting> m_TankShootings = new List<TankShooting>();
 
-    private VirtualJoystick m_Joystick;
+    private TankMovement m_PrimaryMovement;
+    private TankShooting m_PrimaryShooting;
     private MobileFireButton m_FireButton;
+    private Camera m_MainCamera;
     private bool m_IsInitialized;
 
-    private static bool IsMobileRuntime
-    {
-        get
-        {
-            if (Application.isMobilePlatform)
-            {
-                return true;
-            }
-
-            if (SystemInfo.deviceType == DeviceType.Handheld)
-            {
-                return true;
-            }
-
-            if (Application.platform == RuntimePlatform.WebGLPlayer && Input.touchSupported)
-            {
-                return true;
-            }
-
-            return Input.touchSupported;
-        }
-    }
+    private static bool ShouldEnable => Application.isMobilePlatform || Application.platform == RuntimePlatform.WebGLPlayer || Application.isEditor;
 
     public static void RegisterTank(TankMovement movement, TankShooting shooting)
     {
         EnsureInstance();
-
-        if (!IsMobileRuntime)
-        {
-            return;
-        }
-
-        if (movement == null || shooting == null)
-        {
-            return;
-        }
-        s_Instance.AddTank(movement, shooting);
+        s_Instance.RegisterInternal(movement, shooting);
     }
 
     public static void UnregisterTank(TankMovement movement, TankShooting shooting)
@@ -60,7 +34,7 @@ public class MobileInputController : MonoBehaviour
             return;
         }
 
-        s_Instance.RemoveTank(movement, shooting);
+        s_Instance.UnregisterInternal(movement, shooting);
     }
 
     private static void EnsureInstance()
@@ -88,98 +62,82 @@ public class MobileInputController : MonoBehaviour
 
     private void Start()
     {
-        if (!IsMobileRuntime)
+        if (!ShouldEnable)
         {
-            gameObject.SetActive(false);
+            enabled = false;
             return;
         }
 
         BuildUi();
+        CacheCamera();
     }
 
     private void Update()
     {
-        if (!m_IsInitialized)
+        if (!ShouldEnable)
         {
             return;
         }
 
+        if (!m_IsInitialized)
+        {
+            BuildUi();
+        }
+
+        CacheCamera();
         CleanupDestroyedTanks();
-
-        Vector2 input = m_Joystick != null ? m_Joystick.Direction : Vector2.zero;
-        for (int i = 0; i < m_TankMovements.Count; i++)
-        {
-            TankMovement movement = m_TankMovements[i];
-            if (movement != null)
-            {
-                movement.SetExternalInput(input.y, input.x);
-            }
-        }
-
-        bool pressed = m_FireButton != null && m_FireButton.ConsumePressed();
-        bool released = m_FireButton != null && m_FireButton.ConsumeReleased();
-        bool held = m_FireButton != null && m_FireButton.IsHeld;
-
-        for (int i = 0; i < m_TankShootings.Count; i++)
-        {
-            TankShooting shooting = m_TankShootings[i];
-            if (shooting != null)
-            {
-                shooting.SetExternalFireInput(pressed, held, released);
-            }
-        }
+        HandlePointerCommands();
+        HandleFireButton();
     }
 
-    private void OnDestroy()
+    private void RegisterInternal(TankMovement movement, TankShooting shooting)
     {
-        if (s_Instance == this)
-        {
-            s_Instance = null;
-        }
-    }
-
-    private void AddTank(TankMovement movement, TankShooting shooting)
-    {
-        if (!m_TankMovements.Contains(movement))
+        if (movement != null && !m_TankMovements.Contains(movement))
         {
             m_TankMovements.Add(movement);
         }
 
-        if (!m_TankShootings.Contains(shooting))
+        if (shooting != null && !m_TankShootings.Contains(shooting))
         {
             m_TankShootings.Add(shooting);
         }
 
-        if (m_IsInitialized)
-        {
-            movement.SetExternalInput(0f, 0f);
-            shooting.SetExternalFireInput(false, false, false);
-        }
+        UpdatePrimaryTargets();
     }
 
-    private void RemoveTank(TankMovement movement, TankShooting shooting)
+    private void UnregisterInternal(TankMovement movement, TankShooting shooting)
     {
         if (movement != null)
         {
-            movement.DisableExternalInput();
+            m_TankMovements.Remove(movement);
+            if (m_PrimaryMovement == movement)
+            {
+                m_PrimaryMovement = null;
+            }
         }
 
         if (shooting != null)
         {
-            shooting.DisableExternalFireInput();
+            m_TankShootings.Remove(shooting);
+            if (m_PrimaryShooting == shooting)
+            {
+                m_PrimaryShooting = null;
+            }
         }
 
-        m_TankMovements.Remove(movement);
-        m_TankShootings.Remove(shooting);
+        UpdatePrimaryTargets();
     }
 
     private void CleanupDestroyedTanks()
     {
+        bool removed = false;
+
         for (int i = m_TankMovements.Count - 1; i >= 0; i--)
         {
             if (m_TankMovements[i] == null)
             {
                 m_TankMovements.RemoveAt(i);
+                removed = true;
             }
         }
 
@@ -188,16 +146,175 @@ public class MobileInputController : MonoBehaviour
             if (m_TankShootings[i] == null)
             {
                 m_TankShootings.RemoveAt(i);
+                removed = true;
             }
         }
+
+        if (removed)
+        {
+            UpdatePrimaryTargets();
+        }
+    }
+
+    private void UpdatePrimaryTargets()
+    {
+        m_PrimaryMovement = SelectPrimary(m_TankMovements);
+        m_PrimaryShooting = SelectPrimary(m_TankShootings);
+    }
+
+    private static T SelectPrimary<T>(List<T> list) where T : Component
+    {
+        T candidate = null;
+        int bestPlayer = int.MaxValue;
+
+        for (int i = 0; i < list.Count; i++)
+        {
+            T entry = list[i];
+            if (entry == null)
+            {
+                continue;
+            }
+
+            int playerNumber = GetPlayerNumber(entry);
+            if (candidate == null || playerNumber < bestPlayer)
+            {
+                candidate = entry;
+                bestPlayer = playerNumber;
+            }
+        }
+
+        return candidate;
+    }
+
+    private static int GetPlayerNumber(Component component)
+    {
+        switch (component)
+        {
+            case TankMovement movement:
+                return movement.m_PlayerNumber;
+            case TankShooting shooting:
+                return shooting.m_PlayerNumber;
+            default:
+                return int.MaxValue;
+        }
+    }
+
+    private void HandlePointerCommands()
+    {
+        if (m_PrimaryMovement == null)
+        {
+            return;
+        }
+
+        if (!TryGetPointerPosition(out Vector2 pointerPosition, out int pointerId))
+        {
+            return;
+        }
+
+        if (IsPointerOverUi(pointerId))
+        {
+            return;
+        }
+
+        if (!TryGetGroundPosition(pointerPosition, out Vector3 worldPosition))
+        {
+            return;
+        }
+
+        m_PrimaryMovement.SetMoveTarget(worldPosition, m_StopDistance);
+    }
+
+    private void HandleFireButton()
+    {
+        if (m_PrimaryShooting == null || m_FireButton == null)
+        {
+            return;
+        }
+
+        bool pressed = m_FireButton.ConsumePressed();
+        bool released = m_FireButton.ConsumeReleased();
+        bool held = m_FireButton.IsHeld;
+
+        m_PrimaryShooting.SetExternalFireInput(pressed, held, released);
+    }
+
+    private bool TryGetPointerPosition(out Vector2 position, out int pointerId)
+    {
+        position = default;
+        pointerId = -1;
+
+        for (int i = 0; i < Input.touchCount; i++)
+        {
+            Touch touch = Input.GetTouch(i);
+            if (touch.phase == TouchPhase.Began)
+            {
+                position = touch.position;
+                pointerId = touch.fingerId;
+                return true;
+            }
+        }
+
+        if (Input.GetMouseButtonDown(0))
+        {
+            position = Input.mousePosition;
+            pointerId = -1;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsPointerOverUi(int pointerId)
+    {
+        if (EventSystem.current == null)
+        {
+            return false;
+        }
+
+        if (pointerId >= 0)
+        {
+            return EventSystem.current.IsPointerOverGameObject(pointerId);
+        }
+
+        return EventSystem.current.IsPointerOverGameObject();
+    }
+
+    private bool TryGetGroundPosition(Vector2 screenPosition, out Vector3 worldPosition)
+    {
+        worldPosition = default;
+
+        Camera targetCamera = m_MainCamera != null ? m_MainCamera : Camera.main;
+        if (targetCamera == null)
+        {
+            return false;
+        }
+
+        Ray ray = targetCamera.ScreenPointToRay(screenPosition);
+        if (Physics.Raycast(ray, out RaycastHit hit, 500f, m_GroundMask))
+        {
+            worldPosition = hit.point;
+            return true;
+        }
+
+        return false;
     }
 
     private void BuildUi()
     {
+        if (m_IsInitialized)
+        {
+            return;
+        }
+
         EnsureEventSystem();
 
-        Sprite backgroundSprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/Background.psd");
-        Sprite knobSprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/Knob.psd");
+        bool shouldShowButton = Application.isMobilePlatform || Input.touchSupported;
+        if (!shouldShowButton)
+        {
+            m_IsInitialized = true;
+            return;
+        }
+
         Sprite buttonSprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/UISprite.psd");
         Font labelFont = Resources.GetBuiltinResource<Font>("Arial.ttf");
 
@@ -214,35 +331,6 @@ public class MobileInputController : MonoBehaviour
         scaler.screenMatchMode = CanvasScaler.ScreenMatchMode.MatchWidthOrHeight;
         scaler.matchWidthOrHeight = 0.5f;
 
-        var joystickObject = new GameObject("VirtualJoystick", typeof(RectTransform), typeof(Image), typeof(VirtualJoystick));
-        joystickObject.transform.SetParent(canvasObject.transform, false);
-        var joystickRect = joystickObject.GetComponent<RectTransform>();
-        joystickRect.anchorMin = new Vector2(0f, 0f);
-        joystickRect.anchorMax = new Vector2(0f, 0f);
-        joystickRect.pivot = new Vector2(0.5f, 0.5f);
-        joystickRect.anchoredPosition = new Vector2(200f, 200f);
-        joystickRect.sizeDelta = new Vector2(220f, 220f);
-        var joystickImage = joystickObject.GetComponent<Image>();
-        joystickImage.sprite = backgroundSprite;
-        joystickImage.color = new Color(1f, 1f, 1f, 0.35f);
-        joystickImage.raycastTarget = true;
-
-        var handleObject = new GameObject("Handle", typeof(RectTransform), typeof(Image));
-        handleObject.transform.SetParent(joystickObject.transform, false);
-        var handleRect = handleObject.GetComponent<RectTransform>();
-        handleRect.anchorMin = new Vector2(0.5f, 0.5f);
-        handleRect.anchorMax = new Vector2(0.5f, 0.5f);
-        handleRect.pivot = new Vector2(0.5f, 0.5f);
-        handleRect.anchoredPosition = Vector2.zero;
-        handleRect.sizeDelta = new Vector2(110f, 110f);
-        var handleImage = handleObject.GetComponent<Image>();
-        handleImage.sprite = knobSprite;
-        handleImage.color = new Color(1f, 1f, 1f, 0.8f);
-        handleImage.raycastTarget = false;
-
-        var joystick = joystickObject.GetComponent<VirtualJoystick>();
-        joystick.Configure(handleRect, joystickRect.sizeDelta.x * 0.5f);
-
         var fireButtonObject = new GameObject("FireButton", typeof(RectTransform), typeof(Image), typeof(MobileFireButton));
         fireButtonObject.transform.SetParent(canvasObject.transform, false);
         var fireRect = fireButtonObject.GetComponent<RectTransform>();
@@ -251,6 +339,7 @@ public class MobileInputController : MonoBehaviour
         fireRect.pivot = new Vector2(0.5f, 0.5f);
         fireRect.anchoredPosition = new Vector2(-200f, 200f);
         fireRect.sizeDelta = new Vector2(180f, 180f);
+
         var fireImage = fireButtonObject.GetComponent<Image>();
         fireImage.sprite = buttonSprite;
         fireImage.color = new Color(1f, 1f, 1f, 0.45f);
@@ -263,6 +352,7 @@ public class MobileInputController : MonoBehaviour
         labelRect.anchorMax = new Vector2(1f, 1f);
         labelRect.offsetMin = Vector2.zero;
         labelRect.offsetMax = Vector2.zero;
+
         var label = labelObject.GetComponent<Text>();
         label.text = "FIRE";
         label.alignment = TextAnchor.MiddleCenter;
@@ -270,9 +360,22 @@ public class MobileInputController : MonoBehaviour
         label.fontSize = 36;
         label.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
 
-        m_Joystick = joystick;
         m_FireButton = fireButtonObject.GetComponent<MobileFireButton>();
         m_IsInitialized = true;
+    }
+
+    private void CacheCamera()
+    {
+        if (m_MainCamera != null)
+        {
+            return;
+        }
+
+        var main = Camera.main;
+        if (main != null)
+        {
+            m_MainCamera = main;
+        }
     }
 
     private static void EnsureEventSystem()

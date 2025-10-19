@@ -20,6 +20,9 @@ public class TankMovement : MonoBehaviour
     private bool m_UseExternalInput;
     private float m_ExternalMovement;
     private float m_ExternalTurn;
+    private bool m_HasMoveTarget;
+    private Vector3 m_MoveTarget;
+    private float m_MoveTargetTolerance = 1.5f;
 
 
     private void Awake()
@@ -54,15 +57,27 @@ public class TankMovement : MonoBehaviour
     private void Update()
     {
         // Store the player's input and make sure the audio for the engine is playing.
-        if (m_UseExternalInput)
+        float manualMove = Input.GetAxis(m_MovementAxisName);
+        float manualTurn = Input.GetAxis(m_TurnAxisName);
+
+        if (Mathf.Abs(manualMove) > 0.05f || Mathf.Abs(manualTurn) > 0.05f)
+        {
+            m_HasMoveTarget = false;
+        }
+
+        if (m_HasMoveTarget)
+        {
+            UpdateAutoMovement();
+        }
+        else if (m_UseExternalInput)
         {
             m_MovementInputValue = Mathf.Clamp(m_ExternalMovement, -1f, 1f);
             m_TurnInputValue = Mathf.Clamp(m_ExternalTurn, -1f, 1f);
         }
         else
         {
-            m_MovementInputValue = Input.GetAxis(m_MovementAxisName);
-            m_TurnInputValue = Input.GetAxis(m_TurnAxisName);
+            m_MovementInputValue = manualMove;
+            m_TurnInputValue = manualTurn;
         }
         EngineAudio();
     }
@@ -79,6 +94,64 @@ public class TankMovement : MonoBehaviour
         m_UseExternalInput = false;
         m_ExternalMovement = 0f;
         m_ExternalTurn = 0f;
+    }
+
+    public void SetMoveTarget(Vector3 position, float stopDistance = 1.5f)
+    {
+        m_MoveTarget = position;
+        m_MoveTargetTolerance = Mathf.Max(0.2f, stopDistance);
+        m_HasMoveTarget = true;
+        m_UseExternalInput = false;
+    }
+
+    public void ClearMoveTarget()
+    {
+        m_HasMoveTarget = false;
+    }
+
+    private void UpdateAutoMovement()
+    {
+        Vector3 target = m_MoveTarget;
+        target.y = transform.position.y;
+
+        Vector3 toTarget = target - transform.position;
+        toTarget.y = 0f;
+
+        float distance = toTarget.magnitude;
+        if (distance <= m_MoveTargetTolerance)
+        {
+            m_HasMoveTarget = false;
+            m_MovementInputValue = 0f;
+            m_TurnInputValue = 0f;
+            return;
+        }
+
+        if (toTarget.sqrMagnitude < Mathf.Epsilon)
+        {
+            m_HasMoveTarget = false;
+            m_MovementInputValue = 0f;
+            m_TurnInputValue = 0f;
+            return;
+        }
+
+        Vector3 desiredDirection = toTarget.normalized;
+        float turnAngle = Vector3.SignedAngle(transform.forward, desiredDirection, Vector3.up);
+        float turnInput = Mathf.Clamp(turnAngle / 45f, -1f, 1f);
+
+        float forwardDot = Mathf.Clamp01(Vector3.Dot(transform.forward, desiredDirection));
+        float moveInput = forwardDot;
+
+        if (Mathf.Abs(turnAngle) > 60f)
+        {
+            moveInput = 0f;
+        }
+        else if (Mathf.Abs(turnAngle) > 25f)
+        {
+            moveInput *= 0.5f;
+        }
+
+        m_MovementInputValue = moveInput;
+        m_TurnInputValue = turnInput;
     }
 
 
