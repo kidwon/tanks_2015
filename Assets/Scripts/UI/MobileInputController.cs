@@ -14,10 +14,33 @@ public class MobileInputController : MonoBehaviour
     private MobileFireButton m_FireButton;
     private bool m_IsInitialized;
 
-    private static bool IsMobileRuntime => Application.isMobilePlatform || SystemInfo.deviceType == DeviceType.Handheld;
+    private static bool IsMobileRuntime
+    {
+        get
+        {
+            if (Application.isMobilePlatform)
+            {
+                return true;
+            }
+
+            if (SystemInfo.deviceType == DeviceType.Handheld)
+            {
+                return true;
+            }
+
+            if (Application.platform == RuntimePlatform.WebGLPlayer && Input.touchSupported)
+            {
+                return true;
+            }
+
+            return Input.touchSupported;
+        }
+    }
 
     public static void RegisterTank(TankMovement movement, TankShooting shooting)
     {
+        EnsureInstance();
+
         if (!IsMobileRuntime)
         {
             return;
@@ -27,8 +50,6 @@ public class MobileInputController : MonoBehaviour
         {
             return;
         }
-
-        EnsureInstance();
         s_Instance.AddTank(movement, shooting);
     }
 
