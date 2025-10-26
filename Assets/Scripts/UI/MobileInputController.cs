@@ -10,9 +10,20 @@ public class MobileInputController : MonoBehaviour
     [SerializeField] private float m_StopDistance = 1.5f;
     [SerializeField] private bool m_EnableDebugOverlay = true;
     [SerializeField] private int m_DebugHistorySize = 12;
+    [SerializeField] private float m_TargetMarkerHeight = 2.5f;
+    [SerializeField] private float m_TargetMarkerFloatAmplitude = 0.35f;
+    [SerializeField] private float m_TargetMarkerFloatSpeed = 4.2f;
+    [SerializeField] private Vector2 m_TargetMarkerSize = new Vector2(68f, 96f);
+    [SerializeField] private Vector2 m_FullscreenButtonSize = new Vector2(180f, 80f);
+    [SerializeField] private float m_TargetMarkerEntryDuration = 0.18f;
+    [SerializeField] private float m_TargetMarkerExitDuration = 0.18f;
+    [SerializeField] private float m_TargetMarkerEntryOffset = 220f;
+    [SerializeField] private float m_TargetMarkerExitOffset = 220f;
 
     private static MobileInputController s_Instance;
     private static Sprite s_ButtonSprite;
+    private static Sprite s_TargetSprite;
+    private static Sprite s_MenuButtonSprite;
     private static Font s_DebugFont;
     private static readonly string[] s_FontCandidates =
     {
@@ -23,17 +34,36 @@ public class MobileInputController : MonoBehaviour
         "Noto Sans"
     };
 
+    private enum TargetMarkerState
+    {
+        Hidden,
+        Entering,
+        Active,
+        Exiting
+    }
+
     private readonly List<TankMovement> m_TankMovements = new List<TankMovement>();
     private readonly List<TankShooting> m_TankShootings = new List<TankShooting>();
 
     private TankMovement m_PrimaryMovement;
     private TankShooting m_PrimaryShooting;
+    private TankMovement m_TargetedEnemy;
     private MobileFireButton m_FireButton;
     private Camera m_MainCamera;
     private bool m_IsInitialized;
     private Text m_DebugText;
     private ScrollRect m_DebugScroll;
     private RectTransform m_DebugContent;
+    private RectTransform m_TargetMarker;
+    private Image m_TargetMarkerImage;
+    private TargetMarkerState m_TargetMarkerState = TargetMarkerState.Hidden;
+    private float m_TargetMarkerTimer;
+    private bool m_TargetMarkerAnimationInitialized;
+    private Vector2 m_TargetMarkerAnchorCurrent;
+    private Vector2 m_TargetMarkerAnchorFrom;
+    private Vector2 m_TargetMarkerAnchorTarget;
+    private Button m_FullscreenButton;
+    private Text m_FullscreenLabel;
     private readonly List<string> m_DebugEntries = new List<string>();
 
     private static bool ShouldEnable => Application.isMobilePlatform || Application.platform == RuntimePlatform.WebGLPlayer || Application.isEditor;
@@ -127,6 +157,8 @@ public class MobileInputController : MonoBehaviour
         EnsurePrimaryTargets();
         HandlePointerCommands();
         HandleFireButton();
+        UpdateTargetMarker();
+        RefreshFullscreenButton();
 
     }
 
@@ -176,11 +208,16 @@ public class MobileInputController : MonoBehaviour
 
         for (int i = m_TankMovements.Count - 1; i >= 0; i--)
         {
-            if (m_TankMovements[i] == null)
+            TankMovement movement = m_TankMovements[i];
+            if (movement == null)
             {
                 m_TankMovements.RemoveAt(i);
                 removed = true;
                 LogDebug("Removed null movement reference", 1.5f);
+                if (m_TargetedEnemy == movement)
+                {
+                    ClearTargetedEnemy();
+                }
             }
         }
 
@@ -197,6 +234,11 @@ public class MobileInputController : MonoBehaviour
         if (removed)
         {
             UpdatePrimaryTargets();
+        }
+
+        if (m_TargetedEnemy == null || !m_TargetedEnemy.isActiveAndEnabled)
+        {
+            ClearTargetedEnemy();
         }
     }
 
@@ -300,6 +342,7 @@ public class MobileInputController : MonoBehaviour
 
         if (TryGetEnemyTank(pointerPosition, targetCamera, out TankMovement enemyTank))
         {
+            SetTargetedEnemy(enemyTank);
             m_PrimaryMovement.SetLookTarget(enemyTank.transform.position);
             LogDebug($"Aiming at enemy tank: Player {enemyTank.m_PlayerNumber}", 1.5f);
             return;
@@ -310,8 +353,58 @@ public class MobileInputController : MonoBehaviour
             return;
         }
 
+        ClearTargetedEnemy();
         m_PrimaryMovement.SetMoveTarget(worldPosition, m_StopDistance);
         LogDebug("Moving towards tapped position", 1.5f);
+    }
+
+    private void SetTargetedEnemy(TankMovement enemy)
+    {
+        if (enemy == null)
+        {
+            ClearTargetedEnemy();
+            return;
+        }
+
+        m_TargetedEnemy = enemy;
+        m_TargetMarkerState = TargetMarkerState.Entering;
+        m_TargetMarkerTimer = 0f;
+        m_TargetMarkerAnimationInitialized = false;
+
+        if (m_TargetMarker != null)
+        {
+            m_TargetMarker.gameObject.SetActive(false);
+            SetMarkerAlpha(0f);
+        }
+    }
+
+    private void ClearTargetedEnemy(bool immediate = false)
+    {
+        m_TargetedEnemy = null;
+
+        if (m_TargetMarker == null)
+        {
+            return;
+        }
+
+        if (immediate)
+        {
+            m_TargetMarkerState = TargetMarkerState.Hidden;
+            m_TargetMarkerTimer = 0f;
+            m_TargetMarkerAnimationInitialized = false;
+            m_TargetMarker.gameObject.SetActive(false);
+            SetMarkerAlpha(0f);
+            return;
+        }
+
+        if (m_TargetMarkerState == TargetMarkerState.Hidden || m_TargetMarkerState == TargetMarkerState.Exiting)
+        {
+            return;
+        }
+
+        m_TargetMarkerState = TargetMarkerState.Exiting;
+        m_TargetMarkerTimer = 0f;
+        m_TargetMarkerAnimationInitialized = false;
     }
 
     private TankMovement FindActiveMovement()
@@ -412,6 +505,78 @@ public class MobileInputController : MonoBehaviour
         }
     }
 
+    private void UpdateTargetMarker()
+    {
+        if (m_TargetMarker == null)
+        {
+            return;
+        }
+
+        if (m_TargetMarkerState == TargetMarkerState.Hidden && m_TargetedEnemy == null)
+        {
+            if (m_TargetMarker.gameObject.activeSelf)
+            {
+                m_TargetMarker.gameObject.SetActive(false);
+            }
+
+            SetMarkerAlpha(0f);
+            return;
+        }
+
+        RectTransform canvasRect = m_TargetMarker.parent as RectTransform;
+        bool hasTargetPosition = false;
+
+        if (m_TargetedEnemy != null && canvasRect != null)
+        {
+            Camera targetCamera = m_MainCamera != null ? m_MainCamera : Camera.main;
+            if (targetCamera != null && m_TargetedEnemy.isActiveAndEnabled)
+            {
+                float floatOffset = 0f;
+                if (m_TargetMarkerFloatAmplitude > 0f && m_TargetMarkerFloatSpeed > 0f)
+                {
+                    floatOffset = Mathf.Sin(Time.unscaledTime * m_TargetMarkerFloatSpeed) * m_TargetMarkerFloatAmplitude;
+                }
+
+                Vector3 worldPosition = m_TargetedEnemy.transform.position + Vector3.up * (m_TargetMarkerHeight + floatOffset);
+                Vector3 screenPoint = targetCamera.WorldToScreenPoint(worldPosition);
+                if (screenPoint.z > 0f)
+                {
+                    if (RectTransformUtility.ScreenPointToLocalPointInRectangle(canvasRect, new Vector2(screenPoint.x, screenPoint.y), null, out Vector2 localPoint))
+                    {
+                        m_TargetMarkerAnchorTarget = localPoint;
+                        hasTargetPosition = true;
+                    }
+                }
+            }
+        }
+
+        switch (m_TargetMarkerState)
+        {
+            case TargetMarkerState.Hidden:
+                if (m_TargetedEnemy != null)
+                {
+                    m_TargetMarkerState = TargetMarkerState.Entering;
+                    m_TargetMarkerTimer = 0f;
+                    m_TargetMarkerAnimationInitialized = false;
+                }
+                break;
+            case TargetMarkerState.Entering:
+                HandleMarkerEntering(hasTargetPosition);
+                break;
+            case TargetMarkerState.Active:
+                HandleMarkerActive(hasTargetPosition);
+                break;
+            case TargetMarkerState.Exiting:
+                HandleMarkerExiting();
+                break;
+        }
+
+        if (m_TargetMarker.gameObject.activeSelf)
+        {
+            m_TargetMarker.anchoredPosition = m_TargetMarkerAnchorCurrent;
+        }
+    }
+
     private bool TryGetPointerPosition(out Vector2 position, out int pointerId)
     {
         position = default;
@@ -438,6 +603,150 @@ public class MobileInputController : MonoBehaviour
         }
 
         return false;
+    }
+
+    private void HandleMarkerEntering(bool hasTargetPosition)
+    {
+        if (!hasTargetPosition)
+        {
+            return;
+        }
+
+        if (!m_TargetMarkerAnimationInitialized)
+        {
+            m_TargetMarkerAnchorFrom = m_TargetMarkerAnchorTarget + new Vector2(0f, m_TargetMarkerEntryOffset);
+            m_TargetMarkerAnchorCurrent = m_TargetMarkerAnchorFrom;
+            m_TargetMarkerAnimationInitialized = true;
+            m_TargetMarkerTimer = 0f;
+
+            if (!m_TargetMarker.gameObject.activeSelf)
+            {
+                m_TargetMarker.gameObject.SetActive(true);
+            }
+
+            SetMarkerAlpha(0f);
+        }
+
+        m_TargetMarkerTimer += Time.unscaledDeltaTime;
+        float duration = Mathf.Max(0.01f, m_TargetMarkerEntryDuration);
+        float t = Mathf.Clamp01(m_TargetMarkerTimer / duration);
+        float eased = EaseOutCubic(t);
+
+        m_TargetMarkerAnchorCurrent = Vector2.Lerp(m_TargetMarkerAnchorFrom, m_TargetMarkerAnchorTarget, eased);
+        SetMarkerAlpha(eased);
+
+        if (t >= 1f - Mathf.Epsilon)
+        {
+            m_TargetMarkerState = TargetMarkerState.Active;
+            m_TargetMarkerTimer = 0f;
+            m_TargetMarkerAnimationInitialized = false;
+            m_TargetMarkerAnchorCurrent = m_TargetMarkerAnchorTarget;
+            SetMarkerAlpha(1f);
+        }
+    }
+
+    private void HandleMarkerActive(bool hasTargetPosition)
+    {
+        if (!m_TargetMarker.gameObject.activeSelf)
+        {
+            m_TargetMarker.gameObject.SetActive(true);
+        }
+
+        SetMarkerAlpha(1f);
+
+        if (!hasTargetPosition)
+        {
+            ClearTargetedEnemy();
+            return;
+        }
+
+        float followFactor = 1f - Mathf.Exp(-Time.unscaledDeltaTime * 12f);
+        followFactor = Mathf.Clamp01(followFactor);
+        m_TargetMarkerAnchorCurrent = Vector2.Lerp(m_TargetMarkerAnchorCurrent, m_TargetMarkerAnchorTarget, followFactor);
+    }
+
+    private void HandleMarkerExiting()
+    {
+        if (!m_TargetMarkerAnimationInitialized)
+        {
+            if (!m_TargetMarker.gameObject.activeSelf)
+            {
+                m_TargetMarker.gameObject.SetActive(true);
+            }
+
+            m_TargetMarkerAnchorFrom = m_TargetMarkerAnchorCurrent;
+            m_TargetMarkerAnchorTarget = m_TargetMarkerAnchorCurrent + new Vector2(0f, m_TargetMarkerExitOffset);
+            m_TargetMarkerAnimationInitialized = true;
+            m_TargetMarkerTimer = 0f;
+        }
+
+        m_TargetMarkerTimer += Time.unscaledDeltaTime;
+        float duration = Mathf.Max(0.01f, m_TargetMarkerExitDuration);
+        float t = Mathf.Clamp01(m_TargetMarkerTimer / duration);
+        float eased = EaseInCubic(t);
+
+        m_TargetMarkerAnchorCurrent = Vector2.Lerp(m_TargetMarkerAnchorFrom, m_TargetMarkerAnchorTarget, eased);
+        SetMarkerAlpha(1f - t);
+
+        if (t >= 1f - Mathf.Epsilon)
+        {
+            m_TargetMarkerState = TargetMarkerState.Hidden;
+            m_TargetMarkerTimer = 0f;
+            m_TargetMarkerAnimationInitialized = false;
+            m_TargetMarker.gameObject.SetActive(false);
+            SetMarkerAlpha(0f);
+        }
+    }
+
+    private void ToggleFullscreen()
+    {
+        bool targetState = !Screen.fullScreen;
+        try
+        {
+            Screen.fullScreen = targetState;
+        }
+        catch
+        {
+            // ignored – some platforms may not support toggling
+        }
+
+        RefreshFullscreenButton(true);
+    }
+
+    private void RefreshFullscreenButton(bool force = false)
+    {
+        if (m_FullscreenLabel == null)
+        {
+            return;
+        }
+
+        string desired = Screen.fullScreen ? "EXIT" : "FULL";
+        if (force || m_FullscreenLabel.text != desired)
+        {
+            m_FullscreenLabel.text = desired;
+        }
+    }
+
+    private void SetMarkerAlpha(float alpha)
+    {
+        if (m_TargetMarkerImage == null)
+        {
+            return;
+        }
+
+        Color color = m_TargetMarkerImage.color;
+        color.a = Mathf.Clamp01(alpha);
+        m_TargetMarkerImage.color = color;
+    }
+
+    private static float EaseOutCubic(float t)
+    {
+        return 1f - Mathf.Pow(1f - t, 3f);
+    }
+
+    private static float EaseInCubic(float t)
+    {
+        return t * t * t;
     }
 
     private static readonly List<RaycastResult> s_RaycastResults = new List<RaycastResult>();
@@ -614,15 +923,10 @@ public class MobileInputController : MonoBehaviour
         EnsureEventSystem();
 
         bool shouldShowButton = Application.isMobilePlatform || Input.touchSupported;
-        bool shouldCreateCanvas = shouldShowButton || m_EnableDebugOverlay;
-        if (!shouldCreateCanvas)
-        {
-            m_IsInitialized = true;
-            return;
-        }
 
         Sprite buttonSprite = LoadButtonSprite();
         Font labelFont = LoadFont();
+        bool shouldShowFullscreen = Application.platform == RuntimePlatform.WebGLPlayer || Application.isEditor;
 
         var canvasObject = new GameObject("MobileControlsCanvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
         canvasObject.transform.SetParent(transform, false);
@@ -646,12 +950,21 @@ public class MobileInputController : MonoBehaviour
             fireRect.anchorMax = new Vector2(1f, 0f);
             fireRect.pivot = new Vector2(0.5f, 0.5f);
             fireRect.anchoredPosition = new Vector2(-200f, 200f);
-            fireRect.sizeDelta = new Vector2(180f, 180f);
+            fireRect.sizeDelta = new Vector2(188f, 188f);
 
             var fireImage = fireButtonObject.GetComponent<Image>();
             fireImage.sprite = buttonSprite;
-            fireImage.color = new Color(1f, 1f, 1f, 0.45f);
-            fireImage.type = Image.Type.Sliced;
+            fireImage.color = Color.white;
+            fireImage.type = Image.Type.Simple;
+            fireImage.preserveAspect = true;
+
+            var buttonShadow = fireButtonObject.AddComponent<Shadow>();
+            buttonShadow.effectColor = new Color(0f, 0f, 0f, 0.45f);
+            buttonShadow.effectDistance = new Vector2(0f, -6f);
+
+            var buttonOutline = fireButtonObject.AddComponent<Outline>();
+            buttonOutline.effectColor = new Color(0.2f, 0.05f, 0.03f, 0.4f);
+            buttonOutline.effectDistance = new Vector2(1.5f, -1.5f);
 
             var labelObject = new GameObject("Label", typeof(RectTransform), typeof(Text));
             labelObject.transform.SetParent(fireButtonObject.transform, false);
@@ -662,17 +975,84 @@ public class MobileInputController : MonoBehaviour
             labelRect.offsetMax = Vector2.zero;
 
             var label = labelObject.GetComponent<Text>();
-            label.text = "FIRE";
+            label.text = "FIRE!";
             label.alignment = TextAnchor.MiddleCenter;
             label.font = labelFont;
-            label.fontSize = 36;
-            label.color = new Color(0.1f, 0.1f, 0.1f, 0.9f);
+            label.fontSize = 42;
+            label.fontStyle = FontStyle.Bold;
+            label.color = new Color(1f, 0.98f, 0.95f, 0.95f);
+            label.raycastTarget = false;
+
+            var labelShadow = labelObject.AddComponent<Shadow>();
+            labelShadow.effectColor = new Color(0.28f, 0.05f, 0.02f, 0.75f);
+            labelShadow.effectDistance = new Vector2(0f, -3f);
 
             m_FireButton = fireButtonObject.GetComponent<MobileFireButton>();
         }
         else
         {
             m_FireButton = null;
+        }
+
+        if (shouldShowFullscreen)
+        {
+            var fullscreenObject = new GameObject("FullscreenButton", typeof(RectTransform), typeof(Image), typeof(Button));
+            fullscreenObject.transform.SetParent(canvasObject.transform, false);
+            var fullscreenRect = fullscreenObject.GetComponent<RectTransform>();
+            fullscreenRect.anchorMin = new Vector2(1f, 1f);
+            fullscreenRect.anchorMax = new Vector2(1f, 1f);
+            fullscreenRect.pivot = new Vector2(0.5f, 0.5f);
+            fullscreenRect.anchoredPosition = new Vector2(-140f, -120f);
+            fullscreenRect.sizeDelta = m_FullscreenButtonSize;
+
+            var fullscreenImage = fullscreenObject.GetComponent<Image>();
+            fullscreenImage.sprite = LoadMenuButtonSprite();
+            fullscreenImage.color = Color.white;
+            fullscreenImage.type = Image.Type.Simple;
+            fullscreenImage.preserveAspect = true;
+
+            var fullscreenShadow = fullscreenObject.AddComponent<Shadow>();
+            fullscreenShadow.effectColor = new Color(0f, 0f, 0f, 0.35f);
+            fullscreenShadow.effectDistance = new Vector2(0f, -3f);
+
+            var fullscreenOutline = fullscreenObject.AddComponent<Outline>();
+            fullscreenOutline.effectColor = new Color(0.08f, 0.12f, 0.22f, 0.35f);
+            fullscreenOutline.effectDistance = new Vector2(1.2f, -1.2f);
+
+            var fullscreenButton = fullscreenObject.GetComponent<Button>();
+            ColorBlock colors = fullscreenButton.colors;
+            colors.normalColor = Color.white;
+            colors.highlightedColor = new Color(0.92f, 0.96f, 1f, 1f);
+            colors.pressedColor = new Color(0.7f, 0.85f, 1f, 1f);
+            colors.selectedColor = colors.highlightedColor;
+            colors.disabledColor = new Color(0.5f, 0.5f, 0.5f, 0.6f);
+            colors.colorMultiplier = 1f;
+            fullscreenButton.colors = colors;
+
+            var fullscreenLabelObject = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            fullscreenLabelObject.transform.SetParent(fullscreenObject.transform, false);
+            var fullscreenLabelRect = fullscreenLabelObject.GetComponent<RectTransform>();
+            fullscreenLabelRect.anchorMin = new Vector2(0f, 0f);
+            fullscreenLabelRect.anchorMax = new Vector2(1f, 1f);
+            fullscreenLabelRect.offsetMin = Vector2.zero;
+            fullscreenLabelRect.offsetMax = Vector2.zero;
+
+            var fullscreenLabel = fullscreenLabelObject.GetComponent<Text>();
+            fullscreenLabel.alignment = TextAnchor.MiddleCenter;
+            fullscreenLabel.font = labelFont;
+            fullscreenLabel.fontSize = 28;
+            fullscreenLabel.fontStyle = FontStyle.Bold;
+            fullscreenLabel.color = new Color(0.12f, 0.19f, 0.35f, 0.95f);
+            fullscreenLabel.raycastTarget = false;
+
+            var fullscreenLabelShadow = fullscreenLabelObject.AddComponent<Shadow>();
+            fullscreenLabelShadow.effectColor = new Color(1f, 1f, 1f, 0.35f);
+            fullscreenLabelShadow.effectDistance = new Vector2(0f, -1.5f);
+
+            fullscreenButton.onClick.AddListener(ToggleFullscreen);
+            m_FullscreenButton = fullscreenButton;
+            m_FullscreenLabel = fullscreenLabel;
+            RefreshFullscreenButton();
         }
 
         if (m_EnableDebugOverlay)
@@ -747,6 +1127,32 @@ public class MobileInputController : MonoBehaviour
             m_DebugEntries.Clear();
         }
 
+        if (m_TargetMarker == null)
+        {
+            var markerObject = new GameObject("TargetMarker", typeof(RectTransform), typeof(Image));
+            markerObject.transform.SetParent(canvasObject.transform, false);
+            var markerRect = markerObject.GetComponent<RectTransform>();
+            markerRect.anchorMin = new Vector2(0.5f, 0.5f);
+            markerRect.anchorMax = new Vector2(0.5f, 0.5f);
+            markerRect.pivot = new Vector2(0.5f, 0f);
+            markerRect.sizeDelta = m_TargetMarkerSize;
+
+            var markerImage = markerObject.GetComponent<Image>();
+            markerImage.sprite = LoadTargetSprite();
+            markerImage.color = Color.white;
+            markerImage.raycastTarget = false;
+
+            markerObject.SetActive(false);
+            m_TargetMarker = markerRect;
+            m_TargetMarkerImage = markerImage;
+            m_TargetMarkerState = TargetMarkerState.Hidden;
+            m_TargetMarkerTimer = 0f;
+            m_TargetMarkerAnimationInitialized = false;
+            m_TargetMarkerAnchorCurrent = Vector2.zero;
+            m_TargetMarkerAnchorTarget = Vector2.zero;
+            SetMarkerAlpha(0f);
+        }
+
         m_IsInitialized = true;
     }
 
@@ -784,36 +1190,261 @@ public class MobileInputController : MonoBehaviour
             return s_ButtonSprite;
         }
 
-        try
+        const int size = 128;
+        Texture2D texture = new Texture2D(size, size, TextureFormat.RGBA32, false)
         {
-            Sprite builtin = Resources.GetBuiltinResource<Sprite>("UI/Skin/UISprite.psd");
-            if (builtin != null)
-            {
-                s_ButtonSprite = builtin;
-                return s_ButtonSprite;
-            }
-        }
-        catch
-        {
-            // ignored - will fall back to generated sprite
-        }
-
-        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false)
-        {
-            name = "GeneratedMobileButton",
+            name = "GeneratedFireButton",
             hideFlags = HideFlags.HideAndDontSave,
             filterMode = FilterMode.Bilinear,
             wrapMode = TextureWrapMode.Clamp
         };
 
-        Color top = new Color(0.9f, 0.9f, 0.9f, 0.95f);
-        Color bottom = new Color(0.7f, 0.7f, 0.7f, 0.95f);
-        texture.SetPixels(new[] { top, top, bottom, bottom });
+        Color border = new Color(0.18f, 0.03f, 0.02f, 1f);
+        Color fill = new Color(0.95f, 0.35f, 0.1f, 1f);
+        Color highlight = new Color(1f, 0.64f, 0.36f, 1f);
+        Color shadow = new Color(0f, 0f, 0f, 0.32f);
+        Color transparent = new Color(0f, 0f, 0f, 0f);
+
+        Color[] pixels = new Color[size * size];
+        float center = (size - 1) * 0.5f;
+        float radius = center - 4f;
+        float borderThickness = 6f;
+
+        for (int y = 0; y < size; y++)
+        {
+            for (int x = 0; x < size; x++)
+            {
+                float dx = x - center;
+                float dy = y - center;
+                float distance = Mathf.Sqrt((dx * dx) + (dy * dy));
+                int index = (y * size) + x;
+
+                if (distance > radius)
+                {
+                    pixels[index] = transparent;
+                    continue;
+                }
+
+                bool isBorder = distance >= radius - borderThickness;
+                float verticalT = Mathf.Clamp01((center - dy + 10f) / (radius * 2f));
+                Color baseColor = isBorder ? border : Color.Lerp(fill, highlight, Mathf.Pow(verticalT, 1.6f));
+                pixels[index] = baseColor;
+
+                if (!isBorder)
+                {
+                    int shadowX = x + 3;
+                    int shadowY = y - 4;
+                    if (shadowX >= 0 && shadowX < size && shadowY >= 0 && shadowY < size)
+                    {
+                        int shadowIndex = (shadowY * size) + shadowX;
+                        if (pixels[shadowIndex].a < shadow.a)
+                        {
+                            pixels[shadowIndex] = shadow;
+                        }
+                    }
+                }
+            }
+        }
+
+        texture.SetPixels(pixels);
         texture.Apply(false, true);
 
-        s_ButtonSprite = Sprite.Create(texture, new Rect(0f, 0f, texture.width, texture.height), new Vector2(0.5f, 0.5f));
-        s_ButtonSprite.name = "GeneratedMobileButtonSprite";
+        s_ButtonSprite = Sprite.Create(texture, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f));
+        s_ButtonSprite.name = "GeneratedFireButtonSprite";
         return s_ButtonSprite;
+    }
+
+    private static Sprite LoadMenuButtonSprite()
+    {
+        if (s_MenuButtonSprite != null)
+        {
+            return s_MenuButtonSprite;
+        }
+
+        const int width = 256;
+        const int height = 112;
+        const float cornerRadius = 24f;
+        const float borderThickness = 5f;
+
+        Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
+        {
+            name = "GeneratedMenuButton",
+            hideFlags = HideFlags.HideAndDontSave,
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp
+        };
+
+        Color border = new Color(0.08f, 0.12f, 0.22f, 1f);
+        Color fill = new Color(0.6f, 0.78f, 1f, 1f);
+        Color highlight = new Color(0.84f, 0.92f, 1f, 1f);
+        Color shadow = new Color(0f, 0f, 0f, 0.25f);
+        Color transparent = new Color(0f, 0f, 0f, 0f);
+
+        float halfWidth = (width - 1) * 0.5f;
+        float halfHeight = (height - 1) * 0.5f;
+
+        Color[] pixels = new Color[width * height];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                float localX = Mathf.Abs(x - halfWidth);
+                float localY = Mathf.Abs(y - halfHeight);
+                float innerWidth = halfWidth - cornerRadius;
+                float innerHeight = halfHeight - cornerRadius;
+
+                float dx = Mathf.Max(localX - innerWidth, 0f);
+                float dy = Mathf.Max(localY - innerHeight, 0f);
+                float distanceCorner = (dx * dx) + (dy * dy);
+                bool insideRounded = distanceCorner <= cornerRadius * cornerRadius;
+
+                if (!(localX <= innerWidth || localY <= innerHeight || insideRounded))
+                {
+                    pixels[(y * width) + x] = transparent;
+                    continue;
+                }
+
+                bool inBorder;
+                if (localX <= innerWidth || localY <= innerHeight)
+                {
+                    float minToEdge = Mathf.Min(halfWidth - localX, halfHeight - localY);
+                    inBorder = minToEdge <= borderThickness;
+                }
+                else
+                {
+                    float cornerDist = Mathf.Sqrt(distanceCorner);
+                    inBorder = cornerDist >= cornerRadius - borderThickness;
+                }
+
+                float verticalT = Mathf.Clamp01((halfHeight - (y - halfHeight) + 6f) / (height));
+                Color baseColor = Color.Lerp(fill, highlight, Mathf.Pow(verticalT, 1.6f));
+                if (inBorder)
+                {
+                    baseColor = border;
+                }
+
+                pixels[(y * width) + x] = baseColor;
+
+                if (!inBorder)
+                {
+                    int shadowX = x + 2;
+                    int shadowY = y - 3;
+                    if (shadowX >= 0 && shadowX < width && shadowY >= 0 && shadowY < height)
+                    {
+                        int shadowIndex = (shadowY * width) + shadowX;
+                        if (pixels[shadowIndex].a < shadow.a)
+                        {
+                            pixels[shadowIndex] = shadow;
+                        }
+                    }
+                }
+            }
+        }
+
+        texture.SetPixels(pixels);
+        texture.Apply(false, true);
+
+        s_MenuButtonSprite = Sprite.Create(texture, new Rect(0f, 0f, width, height), new Vector2(0.5f, 0.5f));
+        s_MenuButtonSprite.name = "GeneratedMenuButtonSprite";
+        return s_MenuButtonSprite;
+    }
+
+    private static Sprite LoadTargetSprite()
+    {
+        if (s_TargetSprite != null)
+        {
+            return s_TargetSprite;
+        }
+
+        const int width = 68;
+        const int height = 96;
+        const int shaftWidth = 14;
+        const int headHeight = 32;
+        const int headHalfWidth = 30;
+        const int shadowOffsetX = 3;
+        const int shadowOffsetY = -2;
+
+        Texture2D texture = new Texture2D(width, height, TextureFormat.RGBA32, false)
+        {
+            name = "GeneratedTargetMarker",
+            hideFlags = HideFlags.HideAndDontSave,
+            filterMode = FilterMode.Bilinear,
+            wrapMode = TextureWrapMode.Clamp
+        };
+
+        Color outline = new Color(0.27f, 0.02f, 0.02f, 1f);
+        Color body = new Color(0.92f, 0.18f, 0.18f, 1f);
+        Color highlight = new Color(1f, 0.55f, 0.48f, 1f);
+        Color dropShadow = new Color(0f, 0f, 0f, 0.35f);
+        Color transparent = new Color(0f, 0f, 0f, 0f);
+
+        Color[] pixels = new Color[width * height];
+        for (int i = 0; i < pixels.Length; i++)
+        {
+            pixels[i] = transparent;
+        }
+
+        float centerX = (width - 1) * 0.5f;
+
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                float dx = x - centerX;
+                int yFromBottom = y;
+
+                bool fill = false;
+                bool edge = false;
+
+                if (yFromBottom < headHeight)
+                {
+                    float t = (yFromBottom + 0.5f) / Mathf.Max(1f, headHeight);
+                    float halfWidth = Mathf.Lerp(3f, headHalfWidth, t);
+                    fill = Mathf.Abs(dx) <= halfWidth;
+                    edge = Mathf.Abs(dx) >= halfWidth - 1.3f && fill;
+                }
+                else
+                {
+                    float halfWidth = shaftWidth * 0.5f;
+                    fill = Mathf.Abs(dx) <= halfWidth;
+                    edge = Mathf.Abs(dx) >= halfWidth - 1f && fill;
+                }
+
+                if (!fill)
+                {
+                    continue;
+                }
+
+                int index = (y * width) + x;
+
+                Color baseColor = edge ? outline : body;
+                if (!edge)
+                {
+                    float accent = Mathf.Clamp01(1f - (Mathf.Abs(dx) / Mathf.Max(1f, headHalfWidth)));
+                    baseColor = Color.Lerp(body, highlight, accent * 0.55f);
+                }
+
+                pixels[index] = baseColor;
+
+                int shadowX = x + shadowOffsetX;
+                int shadowY = y + shadowOffsetY;
+                if (shadowX >= 0 && shadowX < width && shadowY >= 0 && shadowY < height)
+                {
+                    int shadowIndex = (shadowY * width) + shadowX;
+                    if (pixels[shadowIndex].a < dropShadow.a)
+                    {
+                        pixels[shadowIndex] = dropShadow;
+                    }
+                }
+            }
+        }
+
+        texture.SetPixels(pixels);
+        texture.Apply(false, true);
+
+        s_TargetSprite = Sprite.Create(texture, new Rect(0f, 0f, width, height), new Vector2(0.5f, 0f));
+        s_TargetSprite.name = "GeneratedTargetMarkerSprite";
+        return s_TargetSprite;
     }
 
     private static Font LoadFont()
