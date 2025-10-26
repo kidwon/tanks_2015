@@ -19,10 +19,13 @@ public class TankMovement : MonoBehaviour
     private float m_OriginalPitch;         
     private bool m_UseExternalInput;
     private float m_ExternalMovement;
-    private float m_ExternalTurn;
+    private float m_ExternalTurn;        
     private bool m_HasMoveTarget;
     private Vector3 m_MoveTarget;
     private float m_MoveTargetTolerance = 1.5f;
+    private bool m_HasLookTarget;
+    private Vector3 m_LookTarget;
+    private float m_LookTargetTolerance = 5f;
 
 
     private void Awake()
@@ -65,11 +68,16 @@ public class TankMovement : MonoBehaviour
         if (Mathf.Abs(manualMove) > 0.05f || Mathf.Abs(manualTurn) > 0.05f)
         {
             m_HasMoveTarget = false;
+            m_HasLookTarget = false;
         }
 
         if (m_HasMoveTarget)
         {
             UpdateAutoMovement();
+        }
+        else if (m_HasLookTarget)
+        {
+            UpdateAutoLook();
         }
         else if (m_UseExternalInput)
         {
@@ -89,6 +97,8 @@ public class TankMovement : MonoBehaviour
         m_UseExternalInput = true;
         m_ExternalMovement = Mathf.Clamp(movement, -1f, 1f);
         m_ExternalTurn = Mathf.Clamp(turn, -1f, 1f);
+        m_HasMoveTarget = false;
+        m_HasLookTarget = false;
     }
 
     public void DisableExternalInput()
@@ -103,12 +113,27 @@ public class TankMovement : MonoBehaviour
         m_MoveTarget = position;
         m_MoveTargetTolerance = Mathf.Max(0.2f, stopDistance);
         m_HasMoveTarget = true;
+        m_HasLookTarget = false;
         m_UseExternalInput = false;
     }
 
     public void ClearMoveTarget()
     {
         m_HasMoveTarget = false;
+    }
+
+    public void SetLookTarget(Vector3 position, float toleranceDegrees = 5f)
+    {
+        m_LookTarget = position;
+        m_LookTargetTolerance = Mathf.Clamp(toleranceDegrees, 0.1f, 45f);
+        m_HasLookTarget = true;
+        m_HasMoveTarget = false;
+        m_UseExternalInput = false;
+    }
+
+    public void ClearLookTarget()
+    {
+        m_HasLookTarget = false;
     }
 
     private void UpdateAutoMovement()
@@ -154,6 +179,37 @@ public class TankMovement : MonoBehaviour
 
         m_MovementInputValue = moveInput;
         m_TurnInputValue = turnInput;
+    }
+
+    private void UpdateAutoLook()
+    {
+        Vector3 target = m_LookTarget;
+        target.y = transform.position.y;
+
+        Vector3 toTarget = target - transform.position;
+        toTarget.y = 0f;
+
+        if (toTarget.sqrMagnitude < Mathf.Epsilon)
+        {
+            m_HasLookTarget = false;
+            m_MovementInputValue = 0f;
+            m_TurnInputValue = 0f;
+            return;
+        }
+
+        Vector3 desiredDirection = toTarget.normalized;
+        float turnAngle = Vector3.SignedAngle(transform.forward, desiredDirection, Vector3.up);
+
+        if (Mathf.Abs(turnAngle) <= m_LookTargetTolerance)
+        {
+            m_HasLookTarget = false;
+            m_MovementInputValue = 0f;
+            m_TurnInputValue = 0f;
+            return;
+        }
+
+        m_MovementInputValue = 0f;
+        m_TurnInputValue = Mathf.Clamp(turnAngle / 45f, -1f, 1f);
     }
 
 

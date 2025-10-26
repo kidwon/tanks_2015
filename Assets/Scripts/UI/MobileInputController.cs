@@ -291,7 +291,21 @@ public class MobileInputController : MonoBehaviour
             return;
         }
 
-        if (!TryGetGroundPosition(pointerPosition, out Vector3 worldPosition))
+        Camera targetCamera = m_MainCamera != null ? m_MainCamera : Camera.main;
+        if (targetCamera == null)
+        {
+            LogDebug("No camera available for click-to-move", 2.5f);
+            return;
+        }
+
+        if (TryGetEnemyTank(pointerPosition, targetCamera, out TankMovement enemyTank))
+        {
+            m_PrimaryMovement.SetLookTarget(enemyTank.transform.position);
+            LogDebug($"Aiming at enemy tank: Player {enemyTank.m_PlayerNumber}", 1.5f);
+            return;
+        }
+
+        if (!TryGetGroundPosition(pointerPosition, targetCamera, out Vector3 worldPosition))
         {
             return;
         }
@@ -491,19 +505,12 @@ public class MobileInputController : MonoBehaviour
         return false;
     }
 
-    private bool TryGetGroundPosition(Vector2 screenPosition, out Vector3 worldPosition)
+    private bool TryGetGroundPosition(Vector2 screenPosition, Camera targetCamera, out Vector3 worldPosition)
     {
         worldPosition = default;
 
-        Camera targetCamera = m_MainCamera != null ? m_MainCamera : Camera.main;
-        if (targetCamera == null)
-        {
-            LogDebug("No camera available for click-to-move", 2.5f);
-            return false;
-        }
-
         Ray ray = targetCamera.ScreenPointToRay(screenPosition);
-        if (Physics.Raycast(ray, out RaycastHit hit, 500f, m_GroundMask))
+        if (Physics.Raycast(ray, out RaycastHit hit, 500f, m_GroundMask, QueryTriggerInteraction.Ignore))
         {
             worldPosition = hit.point;
             LogDebug($"Move target set: {worldPosition.x:F1}, {worldPosition.z:F1}", 2f);
@@ -512,6 +519,46 @@ public class MobileInputController : MonoBehaviour
 
         LogDebug("Pointer raycast missed ground", 2f);
         return false;
+    }
+
+    private bool TryGetEnemyTank(Vector2 screenPosition, Camera targetCamera, out TankMovement enemyTank)
+    {
+        enemyTank = null;
+
+        Ray ray = targetCamera.ScreenPointToRay(screenPosition);
+        if (!Physics.Raycast(ray, out RaycastHit hit, 500f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+        {
+            return false;
+        }
+
+        if (hit.collider == null)
+        {
+            return false;
+        }
+
+        TankMovement movement = hit.collider.GetComponentInParent<TankMovement>();
+        if (movement == null)
+        {
+            return false;
+        }
+
+        if (!movement.isActiveAndEnabled)
+        {
+            return false;
+        }
+
+        if (movement == m_PrimaryMovement)
+        {
+            return false;
+        }
+
+        if (movement.m_PlayerNumber == m_PrimaryMovement.m_PlayerNumber)
+        {
+            return false;
+        }
+
+        enemyTank = movement;
+        return true;
     }
 
     private void LogDebug(string message, float duration)
